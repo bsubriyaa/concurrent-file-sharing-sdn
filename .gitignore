@@ -3,3 +3,5 @@ __pycache__/
 downloads/
 shared_files/*
 !shared_files/.gitkeep
+performance_test.bin
+upload_test.txt

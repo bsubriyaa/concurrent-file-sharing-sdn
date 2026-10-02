@@ -1,7 +1,7 @@
 import socket
 import os
 
-HOST = "127.0.0.1"
+HOST = "10.0.0.4"
 PORT = 5000
 DOWNLOAD_FOLDER = "downloads"
 
