@@ -5,12 +5,28 @@ HOST = "127.0.0.1"
 PORT = 5000
 DOWNLOAD_FOLDER = "downloads"
 
+USERNAME = "admin"
+PASSWORD = "1234"
+
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((HOST, PORT))
 
 print(client.recv(1024).decode())
+client.sendall(USERNAME.encode())
+
+print(client.recv(1024).decode())
+client.sendall(PASSWORD.encode())
+
+response = client.recv(1024).decode()
+
+if response == "AUTH_SUCCESS":
+    print("Authentication successful")
+else:
+    print("Authentication failed")
+    client.close()
+    exit()
 
 while True:
     command = input("Enter command: ")

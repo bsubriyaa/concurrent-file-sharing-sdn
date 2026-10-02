@@ -6,6 +6,9 @@ HOST = "0.0.0.0"
 PORT = 5000
 SHARED_FOLDER = "shared_files"
 
+USERNAME = "admin"
+PASSWORD = "1234"
+
 os.makedirs(SHARED_FOLDER, exist_ok=True)
 
 
@@ -13,7 +16,20 @@ def handle_client(conn, addr):
     print("Client connected:", addr)
 
     try:
-        conn.sendall(b"Welcome to the File Sharing Server\n")
+        conn.sendall(b"Username:")
+        username = conn.recv(1024).decode().strip()
+
+        conn.sendall(b"Password:")
+        password = conn.recv(1024).decode().strip()
+
+        if username == USERNAME and password == PASSWORD:
+            conn.sendall(b"AUTH_SUCCESS")
+            print("Authentication successful:", addr)
+        else:
+            conn.sendall(b"AUTH_FAILED")
+            print("Authentication failed:", addr)
+            conn.close()
+            return
 
         while True:
             data = conn.recv(1024).decode().strip()
