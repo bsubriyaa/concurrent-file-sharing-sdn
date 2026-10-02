@@ -31,12 +31,44 @@ def handle_client(conn, addr):
 
                 conn.sendall(response.encode())
 
+            elif data.startswith("UPLOAD "):
+                filename = data[7:].strip()
+
+                size_data = conn.recv(1024).decode().strip()
+                filesize = int(size_data)
+
+                filepath = os.path.join(SHARED_FOLDER, filename)
+
+                conn.sendall(b"READY")
+
+                received = 0
+
+                with open(filepath, "wb") as f:
+                    while received < filesize:
+                        chunk = conn.recv(min(4096, filesize - received))
+
+                        if not chunk:
+                            break
+
+                        f.write(chunk)
+                        received += len(chunk)
+
+                if received == filesize:
+                    conn.sendall(b"UPLOAD SUCCESS")
+                else:
+                    conn.sendall(b"UPLOAD FAILED")
+
             elif data.startswith("DOWNLOAD "):
                 filename = data[9:].strip()
                 filepath = os.path.join(SHARED_FOLDER, filename)
 
                 if os.path.isfile(filepath):
+                    filesize = os.path.getsize(filepath)
+
                     conn.sendall(b"OK")
+                    conn.recv(1024)
+
+                    conn.sendall(str(filesize).encode())
 
                     with open(filepath, "rb") as f:
                         while True:
@@ -47,7 +79,6 @@ def handle_client(conn, addr):
 
                             conn.sendall(chunk)
 
-                    conn.sendall(b"\nEND")
                 else:
                     conn.sendall(b"ERROR: File not found")
 

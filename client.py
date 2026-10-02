@@ -20,25 +20,61 @@ while True:
     if command == "QUIT":
         break
 
-    if command.startswith("DOWNLOAD "):
+    if command.startswith("UPLOAD "):
+        filename = command[7:].strip()
+
+        if not os.path.isfile(filename):
+            print("File not found")
+            continue
+
+        filesize = os.path.getsize(filename)
+
+        client.sendall(str(filesize).encode())
+
+        response = client.recv(5)
+
+        if response == b"READY":
+            with open(filename, "rb") as f:
+                while True:
+                    chunk = f.read(4096)
+
+                    if not chunk:
+                        break
+
+                    client.sendall(chunk)
+
+            response = client.recv(1024)
+            print(response.decode())
+
+    elif command.startswith("DOWNLOAD "):
         filename = command[9:].strip()
 
         response = client.recv(2)
 
         if response == b"OK":
+            client.sendall(b"READY")
+
+            size_data = client.recv(1024).decode().strip()
+            filesize = int(size_data)
+
             filepath = os.path.join(DOWNLOAD_FOLDER, filename)
 
-            with open(filepath, "wb") as f:
-                while True:
-                    data = client.recv(4096)
+            received = 0
 
-                    if data.endswith(b"\nEND"):
-                        f.write(data[:-4])
+            with open(filepath, "wb") as f:
+                while received < filesize:
+                    data = client.recv(min(4096, filesize - received))
+
+                    if not data:
                         break
 
                     f.write(data)
+                    received += len(data)
 
-            print("File downloaded successfully")
+            if received == filesize:
+                print("File downloaded successfully")
+            else:
+                print("Download failed")
 
         else:
             print(response.decode())
