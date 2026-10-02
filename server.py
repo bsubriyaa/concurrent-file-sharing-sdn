@@ -1,15 +1,31 @@
 import socket
 import threading
 import os
+import json
+from datetime import datetime
 
 HOST = "0.0.0.0"
 PORT = 5000
 SHARED_FOLDER = "shared_files"
+METADATA_FILE = "metadata.json"
 
 USERNAME = "admin"
 PASSWORD = "1234"
 
 os.makedirs(SHARED_FOLDER, exist_ok=True)
+
+
+def load_metadata():
+    if os.path.exists(METADATA_FILE):
+        with open(METADATA_FILE, "r") as f:
+            return json.load(f)
+
+    return {}
+
+
+def save_metadata(metadata):
+    with open(METADATA_FILE, "w") as f:
+        json.dump(metadata, f, indent=4)
 
 
 def handle_client(conn, addr):
@@ -70,6 +86,16 @@ def handle_client(conn, addr):
                         received += len(chunk)
 
                 if received == filesize:
+                    metadata = load_metadata()
+
+                    metadata[filename] = {
+                        "size": filesize,
+                        "uploader": username,
+                        "upload_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+
+                    save_metadata(metadata)
+
                     conn.sendall(b"UPLOAD SUCCESS")
                 else:
                     conn.sendall(b"UPLOAD FAILED")
