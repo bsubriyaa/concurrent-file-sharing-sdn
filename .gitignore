@@ -1,7 +1,7 @@
 __pycache__/
-*.pyc
 downloads/
-shared_files/*
-!shared_files/.gitkeep
-performance_test.bin
-upload_test.txt
+*.bin
+*.part
+events.jsonl
+stats.csv
+server.log

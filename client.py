@@ -1,102 +1,52 @@
-import socket
-import os
+"""Interactive client.  Usage: python3 client.py --host 10.0.0.4 --user admin"""
+import argparse
+import getpass
 
-HOST = "10.0.0.4"
-PORT = 5000
-DOWNLOAD_FOLDER = "downloads"
+from fsclient import FSClient, FSError
 
-USERNAME = "admin"
-PASSWORD = "1234"
 
-os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", default="10.0.0.4")
+    ap.add_argument("--port", type=int, default=5000)
+    ap.add_argument("--user", default="admin")
+    ap.add_argument("--password", default=None)
+    args = ap.parse_args()
 
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((HOST, PORT))
+    password = args.password if args.password is not None else getpass.getpass("Password: ")
+    try:
+        c = FSClient(args.host, args.port)
+        c.login(args.user, password)
+    except (OSError, FSError) as e:
+        print("Could not connect/login:", e)
+        return
+    print("Authentication successful. Commands: LIST, UPLOAD <path>, DOWNLOAD <name>, QUIT")
 
-print(client.recv(1024).decode())
-client.sendall(USERNAME.encode())
-
-print(client.recv(1024).decode())
-client.sendall(PASSWORD.encode())
-
-response = client.recv(1024).decode()
-
-if response == "AUTH_SUCCESS":
-    print("Authentication successful")
-else:
-    print("Authentication failed")
-    client.close()
-    exit()
-
-while True:
-    command = input("Enter command: ")
-
-    client.sendall(command.encode())
-
-    if command == "QUIT":
-        break
-
-    if command.startswith("UPLOAD "):
-        filename = command[7:].strip()
-
-        if not os.path.isfile(filename):
-            print("File not found")
-            continue
-
-        filesize = os.path.getsize(filename)
-
-        client.sendall(str(filesize).encode())
-
-        response = client.recv(5)
-
-        if response == b"READY":
-            with open(filename, "rb") as f:
-                while True:
-                    chunk = f.read(4096)
-
-                    if not chunk:
-                        break
-
-                    client.sendall(chunk)
-
-            response = client.recv(1024)
-            print(response.decode())
-
-    elif command.startswith("DOWNLOAD "):
-        filename = command[9:].strip()
-
-        response = client.recv(2)
-
-        if response == b"OK":
-            client.sendall(b"READY")
-
-            size_data = client.recv(1024).decode().strip()
-            filesize = int(size_data)
-
-            filepath = os.path.join(DOWNLOAD_FOLDER, filename)
-
-            received = 0
-
-            with open(filepath, "wb") as f:
-                while received < filesize:
-                    data = client.recv(min(4096, filesize - received))
-
-                    if not data:
-                        break
-
-                    f.write(data)
-                    received += len(data)
-
-            if received == filesize:
-                print("File downloaded successfully")
+    while True:
+        try:
+            line = input("Enter command: ").strip()
+        except EOFError:
+            line = "QUIT"
+        cmd, _, arg = line.partition(" ")
+        cmd = cmd.upper()
+        try:
+            if cmd == "LIST":
+                print(c.list())
+            elif cmd == "UPLOAD" and arg:
+                print("Uploaded", c.upload(arg), "bytes")
+            elif cmd == "DOWNLOAD" and arg:
+                dest, size, digest = c.download(arg)
+                print(f"Downloaded {size} bytes to {dest}\nsha256 {digest}")
+            elif cmd == "QUIT":
+                c.quit()
+                break
             else:
-                print("Download failed")
+                print("Unknown command")
+        except (FSError, OSError) as e:
+            print("Error:", e)
+            if isinstance(e, OSError) or "closed" in str(e) or "lost" in str(e):
+                break
 
-        else:
-            print(response.decode())
 
-    else:
-        response = client.recv(4096)
-        print(response.decode())
-
-client.close()
+if __name__ == "__main__":
+    main()

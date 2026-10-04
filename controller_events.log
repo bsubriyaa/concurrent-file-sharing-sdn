@@ -1,0 +1,5 @@
+08:55:15 CONTROLLER_START static_h1_block=False block_seconds=30
+09:04:54 BLOCK ip=10.0.0.3 reason=3_failed_logins timeout=30s response_ms=89.4
+09:05:26 UNBLOCK ip=10.0.0.3 (block expired, access restored)
+09:23:54 BLOCK ip=10.0.0.3 reason=3_failed_logins timeout=30s response_ms=50.1
+09:24:26 UNBLOCK ip=10.0.0.3 (block expired, access restored)

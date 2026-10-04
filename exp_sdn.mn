@@ -1,0 +1,8 @@
+h2 python3 bench.py single --mode sdn --scenario single --client h2 --runs 10
+h1 python3 bench.py single --mode sdn --scenario concurrent3 --client h1 --runs 3 &
+h2 python3 bench.py single --mode sdn --scenario concurrent3 --client h2 --runs 3 &
+h3 python3 bench.py single --mode sdn --scenario concurrent3 --client h3 --runs 3
+sh sleep 12
+h3 python3 bench.py attack --mode sdn --client h3 --seconds 20 &
+h2 python3 bench.py single --mode sdn --scenario under_attack --client h2 --runs 3
+sh sleep 12
