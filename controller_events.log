@@ -3,3 +3,30 @@
 09:05:26 UNBLOCK ip=10.0.0.3 (block expired, access restored)
 09:23:54 BLOCK ip=10.0.0.3 reason=3_failed_logins timeout=30s response_ms=50.1
 09:24:26 UNBLOCK ip=10.0.0.3 (block expired, access restored)
+10:13:04 CONTROLLER_START static_h1_block=False block_seconds=30
+10:16:58 CONTROLLER_START static_h1_block=False block_seconds=30
+13:34:00 CONTROLLER_START static_h1_block=False block_seconds=30 hog_limit=False
+13:41:24 CONTROLLER_START static_h1_block=False block_seconds=30 hog_limit=True
+13:42:06 HOG_LIMIT ip=10.0.0.1 limit=4000kbps duration=20s
+13:42:29 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+13:42:31 HOG_LIMIT ip=10.0.0.2 limit=4000kbps duration=20s
+13:42:53 HOG_UNLIMIT ip=10.0.0.2 (rate limit expired)
+13:53:48 CONTROLLER_START static_h1_block=False block_seconds=30 hog_limit=True
+13:54:04 HOG_LIMIT ip=10.0.0.1 limit=5000kbps duration=20s
+13:54:27 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+13:54:31 HOG_LIMIT ip=10.0.0.1 limit=5000kbps duration=20s
+13:54:51 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+14:02:51 HOG_LIMIT ip=10.0.0.1 limit=5000kbps duration=20s
+14:03:11 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+14:05:18 CONTROLLER_START static_h1_block=False block_seconds=30 hog_limit=True
+14:06:45 HOG_LIMIT ip=10.0.0.1 limit=5000kbps duration=20s
+14:07:08 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+14:07:12 HOG_LIMIT ip=10.0.0.1 limit=5000kbps duration=20s
+14:07:35 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+14:11:48 HOG_LIMIT ip=10.0.0.1 limit=5000kbps duration=20s
+14:12:08 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+14:12:16 HOG_LIMIT ip=10.0.0.1 limit=5000kbps duration=20s
+14:12:22 HOG_LIMIT ip=10.0.0.2 limit=5000kbps duration=20s
+14:12:36 HOG_UNLIMIT ip=10.0.0.1 (rate limit expired)
+14:12:42 HOG_UNLIMIT ip=10.0.0.2 (rate limit expired)
+14:14:38 CONTROLLER_START static_h1_block=False block_seconds=30 hog_limit=False

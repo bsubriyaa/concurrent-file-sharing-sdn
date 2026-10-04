@@ -7,6 +7,8 @@ Dynamic blocking : the file server appends application events to events.jsonl.
 Static policy    : STATIC_H1_BLOCK=1 installs a permanent h1 -> server:5000 drop
                    (used as the "static ACL" baseline).
 Monitoring       : port statistics every 2 s -> stats.csv (per-port Mbit/s).
+Hog limiter     : HOG_LIMIT=1 -> a host taking >60% of a busy link while another host is
+                   active gets an OpenFlow meter (default 40% of the link) for 20 s.
 Logs             : controller_events.log
 """
 import os
@@ -20,7 +22,7 @@ from os_ken.lib import hub
 from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib.packet import packet, ethernet
 
-from policy import BlockPolicy
+from policy import BlockPolicy, HogPolicy
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EVENTS_FILE = os.path.join(BASE_DIR, "events.jsonl")
@@ -34,6 +36,10 @@ STATIC_PRIORITY = 150
 BLOCK_SECONDS = int(os.environ.get("BLOCK_SECONDS", "30"))
 STATIC_H1_BLOCK = os.environ.get("STATIC_H1_BLOCK", "0") == "1"
 STATS_INTERVAL = 2
+HOG_LIMIT = os.environ.get("HOG_LIMIT", "0") == "1"
+LINK_MBPS = float(os.environ.get("LINK_MBPS", "10"))
+LIMIT_PRIORITY = 160
+PORT_IP = {1: "10.0.0.1", 2: "10.0.0.2", 3: "10.0.0.3"}   # client switch ports
 
 
 class FileShareController(app_manager.OSKenApp):
@@ -45,10 +51,12 @@ class FileShareController(app_manager.OSKenApp):
         self.datapaths = {}
         self.policy = BlockPolicy(threshold=3, window=60, block_seconds=BLOCK_SECONDS)
         self.prev_ports = {}
+        self.hog = HogPolicy(link_mbps=LINK_MBPS)
         if not os.path.exists(STATS_FILE):
             with open(STATS_FILE, "w") as f:
                 f.write("ts,port,rx_mbps,tx_mbps\n")
-        self.log("CONTROLLER_START static_h1_block=%s block_seconds=%s" % (STATIC_H1_BLOCK, BLOCK_SECONDS))
+        self.log("CONTROLLER_START static_h1_block=%s block_seconds=%s hog_limit=%s"
+                 % (STATIC_H1_BLOCK, BLOCK_SECONDS, HOG_LIMIT))
         hub.spawn(self._tail_events)
         hub.spawn(self._poll_stats)
 
@@ -99,10 +107,38 @@ class FileShareController(app_manager.OSKenApp):
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed(self, ev):
         m = ev.msg
+        if m.priority == LIMIT_PRIORITY:
+            self.log("HOG_UNLIMIT ip=%s (rate limit expired)" % m.match.get("ipv4_dst"))
+            return
         if m.priority == BLOCK_PRIORITY:
             ip = m.match.get("ipv4_src")
             self.policy.blocked.pop(ip, None)
             self.log("UNBLOCK ip=%s (block expired, access restored)" % ip)
+
+    @set_ev_cls(ofp_event.EventOFPErrorMsg, MAIN_DISPATCHER)
+    def error_handler(self, ev):
+        m = ev.msg
+        self.log("OPENFLOW_ERROR type=%s code=%s" % (m.type, m.code))
+
+    # ------------------------------------------------------ hog rate limiter
+    def apply_limit(self, dp, port):
+        ofp, parser = dp.ofproto, dp.ofproto_parser
+        ip = PORT_IP[port]
+        meter_id = 100 + port
+        rate = self.hog.limit_kbps
+        # re-create the meter so the call also works if it already exists
+        dp.send_msg(parser.OFPMeterMod(dp, ofp.OFPMC_DELETE, ofp.OFPMF_KBPS, meter_id))
+        band = parser.OFPMeterBandDrop(rate=rate, burst_size=max(100, rate // 2))
+        dp.send_msg(parser.OFPMeterMod(dp, ofp.OFPMC_ADD, ofp.OFPMF_KBPS, meter_id, [band]))
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_src=SERVER_IP, ipv4_dst=ip,
+                                ip_proto=6, tcp_src=SERVICE_PORT)
+        inst = [parser.OFPInstructionMeter(meter_id),
+                parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                             [parser.OFPActionOutput(port)])]
+        dp.send_msg(parser.OFPFlowMod(datapath=dp, priority=LIMIT_PRIORITY, match=match,
+                                      instructions=inst, hard_timeout=self.hog.limit_seconds,
+                                      flags=ofp.OFPFF_SEND_FLOW_REM))
+        self.log("HOG_LIMIT ip=%s limit=%dkbps duration=%ds" % (ip, rate, self.hog.limit_seconds))
 
     # --------------------------------------------------------- learning sw
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -157,6 +193,7 @@ class FileShareController(app_manager.OSKenApp):
     def port_stats_reply(self, ev):
         now = time.time()
         rows = []
+        client_rates = {}
         for s in ev.msg.body:
             if s.port_no > 0xffff00:
                 continue
@@ -166,6 +203,8 @@ class FileShareController(app_manager.OSKenApp):
             if prev:
                 dt = now - prev[0]
                 if dt > 0:
+                    if s.port_no in PORT_IP:
+                        client_rates[s.port_no] = (s.tx_bytes - prev[2]) * 8 / dt / 1e6
                     rows.append("%.2f,%d,%.3f,%.3f" % (
                         now, s.port_no,
                         (s.rx_bytes - prev[1]) * 8 / dt / 1e6,
@@ -173,3 +212,6 @@ class FileShareController(app_manager.OSKenApp):
         if rows:
             with open(STATS_FILE, "a") as f:
                 f.write("\n".join(rows) + "\n")
+        if HOG_LIMIT and len(client_rates) == len(PORT_IP):
+            for port in self.hog.update(client_rates):
+                self.apply_limit(ev.msg.datapath, port)

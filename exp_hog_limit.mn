@@ -1,0 +1,3 @@
+h1 sh -c 'for c in a b c d; do python3 bench.py single --mode sdn_limit --scenario hog_hog --client h1$c --runs 3 & done; wait' &
+h2 python3 bench.py single --mode sdn_limit --scenario hog_victim --client h2 --runs 3
+sh sleep 45

@@ -3,7 +3,8 @@
 A multi-user file-sharing service built on raw **TCP sockets** (Python `socket` + `threading`),
 run inside **Mininet** with an **Open vSwitch** switch controlled by an **OS-Ken** (OpenFlow 1.3)
 controller. The application reports security events to the controller, which reacts by installing
-and removing flow rules.
+and removing flow rules; the controller also monitors bandwidth and can rate-limit a host that
+monopolises the link.
 
 ## Architecture
 
@@ -26,9 +27,13 @@ All four hosts connect only to `s1` (star topology).
 **Socket -> SDN integration.** The file server appends one JSON line per application event
 (`AUTH_OK`, `AUTH_FAIL`, `UPLOAD`, `DOWNLOAD`, ...) to `events.jsonl`. Mininet hosts share the
 filesystem with the controller process, so the controller simply tails that file.
-After **3 failed logins from one IP** it installs a priority-200 DROP flow for
-`IP -> 10.0.0.4:5000` with a 30 s hard timeout; access is restored automatically when the flow
-expires. The controller also polls port statistics every 2 s into `stats.csv` (per-port Mbit/s).
+
+* **Dynamic blocking.** After **3 failed logins from one IP** the controller installs a priority-200
+  DROP flow for `IP -> 10.0.0.4:5000` with a 30 s hard timeout; access is restored automatically.
+* **Bandwidth monitoring.** Port statistics every 2 s -> `stats.csv` (per-port Mbit/s).
+* **Hog limiter (optional, `HOG_LIMIT=1`).** If one client takes more than 70% of a busy link while
+  another client is active (two consecutive polls), the controller attaches an OpenFlow meter
+  (50% of the link) to that host's download traffic for 20 s. It re-checks after expiry.
 
 ## Files
 
@@ -37,11 +42,12 @@ expires. The controller also polls port statistics every 2 s into `stats.csv` (p
 | `server.py` | Threaded TCP file server: authentication, LIST, UPLOAD, DOWNLOAD, metadata, event log |
 | `fsclient.py` | Client library implementing the protocol |
 | `client.py` | Interactive command-line client |
-| `controller.py` | OS-Ken controller: learning switch + dynamic blocking + bandwidth monitor |
-| `policy.py` | Pure-Python blocking policy (3 failures / 60 s -> block) |
+| `controller.py` | OS-Ken controller: learning switch, dynamic blocking, bandwidth monitor, hog limiter |
+| `policy.py` | Pure-Python policies: `BlockPolicy` (3 failures / 60 s) and `HogPolicy` |
 | `topology.py` | Mininet topology; `--mode sdn` or `--mode baseline`, link cap options |
 | `bench.py`, `analyze.py` | Benchmark client and results summariser |
-| `exp_sdn.mn`, `exp_baseline.mn` | Experiment scripts run from the Mininet CLI |
+| `exp_sdn.mn`, `exp_baseline.mn` | Access-control / throughput experiments (run from the Mininet CLI) |
+| `exp_hog_nolimit.mn`, `exp_hog_limit.mn` | Hog-limiter experiment, limiter off / on |
 | `selftest.py` | Local loopback tests of the server (no Mininet needed) |
 | `results.csv`, `results_summary.md` | Raw and summarised experiment results |
 
@@ -78,12 +84,11 @@ python3 selftest.py        # 13 checks: 5 MB hash, path traversal, interrupted u
 
 ## Running the SDN demo
 
-Terminal A (controller):
+Terminal A (controller; add `HOG_LIMIT=1` to enable the limiter):
 
 ```bash
 cd file-sharing-sdn
 osken-manager controller.py
-# optional static ACL baseline: STATIC_H1_BLOCK=1 osken-manager controller.py
 ```
 
 Terminal B (network):
@@ -99,7 +104,7 @@ At the `mininet>` prompt:
 ```text
 pingall
 server python3 server.py > server.log 2>&1 &
-h2 python3 client.py --host 10.0.0.4 --user admin --password 1234
+h2 sh -c 'printf "LIST\nQUIT\n" | python3 client.py --host 10.0.0.4 --user admin --password 1234'
 ```
 
 Dynamic block demo (h3 fails three logins, is blocked, then recovers after 30 s):
@@ -108,11 +113,13 @@ Dynamic block demo (h3 fails three logins, is blocked, then recovers after 30 s)
 h3 sh -c 'for i in 1 2 3; do python3 client.py --host 10.0.0.4 --user admin --password wrong; done'
 h3 sh -c 'printf "LIST\nQUIT\n" | timeout 5 python3 client.py --host 10.0.0.4 --user admin --password 1234'   # no output: blocked
 h2 sh -c 'printf "LIST\nQUIT\n" | python3 client.py --host 10.0.0.4 --user admin --password 1234'             # still works
-sh ovs-ofctl -O OpenFlow13 dump-flows s1                                                                      # shows the priority-200 drop flow
+sh ovs-ofctl -O OpenFlow13 dump-flows s1                                                                      # priority-200 drop flow
 sh cat controller_events.log                                                                                  # BLOCK ... response_ms=..., UNBLOCK ...
 ```
 
-Note: the Mininet prompt replaces host names such as `h2` with their IPs inside commands.
+Note: the Mininet prompt replaces host names such as `h2` with their IPs inside commands, and
+several background (`&`) commands sent to the same host can get garbled, so start multiple
+background jobs from one `sh -c '... & ... & wait'` command (as `exp_hog_*.mn` do).
 
 ## Reproducing the experiments
 
@@ -123,8 +130,11 @@ source exp_sdn.mn
 ```
 
 Baseline run: stop the controller, `sudo mn -c`, `sudo python3 topology.py --mode baseline`,
-start the server, then `source exp_baseline.mn`. Finally `python3 analyze.py`.
-Delete `results.csv` first to start fresh.
+start the server, then `source exp_baseline.mn`.
+
+Hog-limiter run: start the controller once with `HOG_LIMIT=0` and `source exp_hog_nolimit.mn`,
+then restart it with `HOG_LIMIT=1` and `source exp_hog_limit.mn`.
+Finally `python3 analyze.py`. Delete `results.csv` first to start fresh.
 
 ## Results (server link capped at 10 Mbit/s, 5 MB file)
 
@@ -136,19 +146,32 @@ Delete `results.csv` first to start fresh.
 | brute-force login, 20 s | attempts that reached the server | 99 of 99 | 3 of 20 |
 | h2 download during the attack | throughput (Mbit/s) | 9.58 ± 0.10 | 9.61 ± 0.06 |
 
-* The controller blocked the attacker **89 ms** after the third failed login was logged, and
-  restored access after about 32 s (30 s timeout plus switch expiry check).
+Hog scenario (h1 opens 4 downloads, h2 opens 1; controller present in both columns):
+
+| Metric (h2, the single-connection host) | Limiter off | Limiter on |
+|---|---|---|
+| throughput (Mbit/s) | 1.72 ± 0.40 (n=7) | 3.47 ± 1.84 (n=6) |
+| time to download 5 MB (s) | 25.7 ± 7.1 | 14.2 ± 4.8 |
+
+* The controller blocked the attacker **89 ms** after the third failed login was logged (50 ms in a
+  second run), and restored access after about 32 s (30 s timeout plus switch expiry check).
 * The SDN adds no measurable overhead to normal transfers. Throughput differences in the
   single-client and concurrent tests are within run-to-run noise; the SDN does not make
-  transfers faster. Its benefit here is access control with fast automatic reaction.
+  transfers faster there. Its benefit is access control with fast automatic reaction.
 * The brute-force attack uses little bandwidth, so it does not reduce h2's throughput in either
   mode; the block protects the server and its logs rather than the link.
+* With the hog limiter, h2's throughput roughly doubles and its download time falls by about 45%.
+  h2 still does not reach a fair 5 Mbit/s (see limitations).
+* `n=7` for the limiter-off case includes one extra run from an interrupted earlier attempt;
+  dropping it leaves the mean at 1.72.
 * All downloads were verified with SHA-256.
 
 ## Known limitations
 
 * The controller and server communicate through a shared file, which works because Mininet hosts
   share the host filesystem; a real deployment would use a network channel.
-* The policy blocks per source IP and only for the file-sharing port.
+* Blocking is per source IP and only for the file-sharing port.
+* The hog limiter's meter sits at the switch, after the capped server link. The hog's packets
+  still use the shared link before being dropped, so the victim gets about 3.5 of a fair 5 Mbit/s.
+  Detection takes about 6 s and limits last 20 s. Sample sizes are small (3 runs per set).
 * No TLS; demo accounts are hard-coded.
-* Fairness is not enforced by the controller (no meters/queues yet).

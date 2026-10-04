@@ -81,7 +81,8 @@ def attack(a):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("kind", choices=["single", "attack"])
-    ap.add_argument("--mode", required=True, choices=["baseline", "sdn"])
+    ap.add_argument("--mode", required=True,
+                    help="label for this run: baseline, sdn, sdn_nolimit, sdn_limit ...")
     ap.add_argument("--scenario", default="single")
     ap.add_argument("--client", default="h2")
     ap.add_argument("--host", default="10.0.0.4")
