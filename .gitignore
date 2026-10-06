@@ -5,3 +5,6 @@ downloads/
 events.jsonl
 stats.csv
 server.log
+shared_files/
+metadata.json
+metadata.json.tmp
